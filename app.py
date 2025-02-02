@@ -1,3 +1,4 @@
+# app.py
 import streamlit as st
 import pandas as pd
 import requests
@@ -5,13 +6,13 @@ import plotly.graph_objects as go
 import numpy as np
 
 # Configuration
-API_KEY = "YOUR_ALPHA_VANTAGE_API_KEY"
+API_KEY = "XSNKMIGE7B4OSCNA"  # Replace with your key
 NASDAQ_SYMBOLS = ["AAPL", "MSFT", "AMZN", "GOOGL", "TSLA", "META", "NVDA"]
 INDICATORS = ["MACD", "RSI (14-day)", "VWAP", "Bollinger Bands"]
 
 # Helper Functions
 def get_stock_data(symbol, interval="daily"):
-    """Fetch complete stock data from Alpha Vantage"""
+    """Fetch stock price data from Alpha Vantage"""
     function_map = {
         "daily": "TIME_SERIES_DAILY",
         "weekly": "TIME_SERIES_WEEKLY",
@@ -22,7 +23,26 @@ def get_stock_data(symbol, interval="daily"):
     response = requests.get(url)
     data = response.json()
     
-    time_series = data.get(list(data.keys())[1], {})
+    # Handle API errors
+    if "Error Message" in data:
+        raise ValueError(f"API Error: {data['Error Message']}")
+    if "Note" in data:  # API rate limit message
+        raise ValueError(f"API Limit: {data['Note']}")
+    
+    # Find the correct time series key
+    time_series_keys = {
+        "daily": "Time Series (Daily)",
+        "weekly": "Weekly Time Series",
+        "monthly": "Monthly Time Series"
+    }
+    
+    time_series_key = time_series_keys.get(interval)
+    
+    if not time_series_key or time_series_key not in data:
+        raise ValueError(f"Unexpected API response format for {symbol}")
+    
+    time_series = data[time_series_key]
+    
     df = pd.DataFrame.from_dict(time_series, orient="index")
     df.index = pd.to_datetime(df.index)
     df = df.rename(columns={
@@ -32,7 +52,25 @@ def get_stock_data(symbol, interval="daily"):
         "4. close": "close",
         "5. volume": "volume"
     }).astype(float)
+    
     return df.sort_index()
+
+def get_financial_ratios(symbol):
+    """Fetch key financial ratios from Alpha Vantage"""
+    url = f"https://www.alphavantage.co/query?function=OVERVIEW&symbol={symbol}&apikey={API_KEY}"
+    response = requests.get(url)
+    data = response.json()
+    
+    return {
+        "P/E Ratio": data.get("PERatio", "N/A"),
+        "EPS": data.get("EPS", "N/A"),
+        "ROE": data.get("ReturnOnEquityTTM", "N/A"),
+        "Market Cap": f"${data.get('MarketCapitalization', 'N/A')}",
+        "Dividend Yield": f"{data.get('DividendYield', 'N/A')}%",
+        "Profit Margin": data.get("ProfitMargin", "N/A"),
+        "52 Week High": data.get("52WeekHigh", "N/A"),
+        "52 Week Low": data.get("52WeekLow", "N/A")
+    }
 
 # Technical Indicator Calculations
 def calculate_rsi(data, window=14):
@@ -66,9 +104,14 @@ selected_indicator = st.sidebar.selectbox("Select Technical Indicator", INDICATO
 st.title(f"Advanced Stock Analyzer - {symbol}")
 
 # Fetch Data
-with st.spinner("Loading data..."):
-    data = get_stock_data(symbol, interval)
-    ratios = get_financial_ratios(symbol)  # From previous implementation
+try:
+    with st.spinner("Loading data..."):
+        data = get_stock_data(symbol, interval)
+        ratios = get_financial_ratios(symbol)
+except Exception as e:
+    st.error(f"Error loading data: {str(e)}")
+    st.info("Common fixes: Check API key, try a different stock, or wait 1 minute if you hit rate limits")
+    st.stop()
 
 # Price Chart
 st.subheader(f"Price Chart ({interval.capitalize()})")
@@ -81,7 +124,12 @@ price_fig.add_trace(go.Candlestick(
     close=data['close'],
     name='Price'
 ))
-price_fig.update_layout(height=400, template="plotly_dark", xaxis_rangeslider_visible=False)
+price_fig.update_layout(
+    height=400,
+    template="plotly_dark",
+    xaxis_rangeslider_visible=False,
+    title=f"{symbol} Price Chart"
+)
 st.plotly_chart(price_fig, use_container_width=True)
 
 # Indicator Chart
@@ -138,9 +186,26 @@ elif selected_indicator == "Bollinger Bands":
         name='Moving Average', line=dict(color='blue')
     ))
 
-indicator_fig.update_layout(height=400, template="plotly_dark")
+indicator_fig.update_layout(
+    height=400,
+    template="plotly_dark",
+    title=f"{selected_indicator} Chart"
+)
 st.plotly_chart(indicator_fig, use_container_width=True)
 
-# Financial Ratios (from previous implementation)
-st.subheader("Key Financial Ratios")
-# ... (keep your existing ratios display code here) ...
+# Financial Ratios
+st.subheader("Fundamental Analysis")
+cols = st.columns(4)
+ratio_data = [
+    ("P/E Ratio", ratios["P/E Ratio"]),
+    ("EPS", ratios["EPS"]),
+    ("ROE", ratios["ROE"]),
+    ("Market Cap", ratios["Market Cap"]),
+    ("Dividend Yield", ratios["Dividend Yield"]),
+    ("Profit Margin", ratios["Profit Margin"]),
+    ("52 Week High", ratios["52 Week High"]),
+    ("52 Week Low", ratios["52 Week Low"])
+]
+
+for i, (name, value) in enumerate(ratio_data):
+    cols[i % 4].metric(label=name, value=value)
